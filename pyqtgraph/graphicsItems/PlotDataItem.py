@@ -1514,30 +1514,9 @@ class PlotDataItem(GraphicsObject):
             # downsampling is expensive; delay until after clipping.
 
         if self.opts['clipToView']:
-            if view is None or view.autoRangeEnabled()[0]:
-                pass  # no ViewBox to clip to, or view will autoscale to data range.
-            else:
-                # clip-to-view always presumes that x-values are in increasing order
-                if view_range is not None and len(x) > 1:
-                    # find first in-view value (left edge) and first out-of-view value
-                    # (right edge) since we want the curve to go to the edge of the
-                    # screen, we need to preserve one down-sampled point on the left and
-                    # one of the right, so we extend the interval
-
-                    # np.searchsorted performs poorly when the array.dtype does not
-                    # match the type of the value (float) being searched.
-                    # see: https://github.com/pyqtgraph/pyqtgraph/pull/2719
-                    # x0 = np.searchsorted(x, view_range.left()) - ds
-                    x0 = bisect.bisect_left(x, view_range.left()) - ds
-                    # x0 = np.clip(x0, 0, len(x))
-                    x0 = fn.clip_scalar(x0, 0, len(x))  # workaround
-
-                    # x1 = np.searchsorted(x, view_range.right()) + ds
-                    x1 = bisect.bisect_left(x, view_range.right()) + ds
-                    # x1 = np.clip(x1, 0, len(x))
-                    x1 = fn.clip_scalar(x1, x0, len(x))
-                    x = x[x0:x1]
-                    y = y[x0:x1]
+            # If the user wants to clip in Y rather than X:
+            if view is not None and not view.autoRangeEnabled()[1]:
+                x, y = self.clipToViewY(x, y, ds, view)
 
         if ds > 1:
             if self.opts['downsampleMethod'] == 'subsample':
@@ -1837,3 +1816,29 @@ def isSequence(obj):
             obj.implements('MetaArray')
         )
     )
+def _clipToViewY(self, x, y, ds, view):
+        """
+        Clip x and y to the visible region on the Y-axis.
+        ds is the "downsampling" margin or how many points to
+        keep outside the exact boundary.
+        """
+        # Usually view.viewRange() returns [[xMin, xMax], [yMin, yMax]]
+        view_range = view.viewRange()
+        # The Y range is typically the second entry in viewRange()
+        yMin, yMax = view_range[1]
+
+        # We only clip if y is sorted and has more than 1 point
+        if len(y) <= 1:
+            return x, y
+
+        # 1) Find the first in-view index (lower edge) minus ds
+        #    We use bisect_left with yMin to find where that fits in sorted y.
+        start_idx = bisect.bisect_left(y, yMin) - ds
+        start_idx = fn.clip_scalar(start_idx, 0, len(y))
+
+        # 2) Find the first out-of-view index (upper edge) plus ds
+        end_idx = bisect.bisect_left(y, yMax) + ds
+        end_idx = fn.clip_scalar(end_idx, start_idx, len(y))
+
+        # 3) Slice both x and y
+        return x[start_idx:end_idx], y[start_idx:end_idx]
